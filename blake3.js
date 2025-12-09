@@ -408,13 +408,13 @@ function parentOutput(leftChildCV, rightChildCV, key, flags) {
  * Merge the chaining values in the CV stack
  * Pops parent nodes as needed to maintain tree structure
  */
-function addChunkChainingValue(cvStack, newCV, totalChunks) {
+function addChunkChainingValue(cvStack, newCV, totalChunks, key, flags) {
   // Keep merging as long as there are complete subtrees
   let chunksProcessed = totalChunks;
   let currentCV = newCV;
 
   while (chunksProcessed > 0 && (chunksProcessed & 1) === 0) {
-    currentCV = parentOutput(cvStack.pop(), currentCV, IV, 0).chainingValue();
+    currentCV = parentOutput(cvStack.pop(), currentCV, key, flags).chainingValue();
     chunksProcessed >>= 1;
   }
 
@@ -482,7 +482,7 @@ class Hasher {
       if (this.chunkState.len() === CHUNK_LEN) {
         const chunkCV = this.chunkState.output().chainingValue();
         const totalChunks = this.chunkState.chunkCounter + 1;
-        addChunkChainingValue(this.cvStack, chunkCV, totalChunks);
+        addChunkChainingValue(this.cvStack, chunkCV, totalChunks, this.key, this.flags);
         this.chunkState = new ChunkState(this.key, totalChunks, this.flags);
       }
 
@@ -502,23 +502,21 @@ class Hasher {
    */
   finalize(length = OUT_LEN) {
     // Get the output from the current (final) chunk
-    const output = this.chunkState.output();
-    const parentNodesCV = mergeStack(this.cvStack, this.key, this.flags);
+    let output = this.chunkState.output();
 
-    // If there were previous chunks, merge with final chunk
-    if (this.cvStack.length === 0) {
-      // Only one chunk - use it directly as root
-      return output.rootOutputBytes(length);
-    } else {
-      // Multiple chunks - merge parent nodes with final chunk
-      const rootOutput = parentOutput(
-        parentNodesCV,
+    // Traverse upward through the CV stack, merging parent nodes
+    // Stack is processed in reverse order (top to bottom)
+    // Each stack entry becomes the LEFT child, current output becomes RIGHT child
+    for (let i = this.cvStack.length - 1; i >= 0; i--) {
+      output = parentOutput(
+        this.cvStack[i],
         output.chainingValue(),
         this.key,
         this.flags
       );
-      return rootOutput.rootOutputBytes(length);
     }
+
+    return output.rootOutputBytes(length);
   }
 
   /**
